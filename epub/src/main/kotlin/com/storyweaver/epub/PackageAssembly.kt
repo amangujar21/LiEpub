@@ -138,7 +138,7 @@ internal object PackageAssembly {
                 }
                 .mapIndexed { index, path ->
                     val media = mediaTypeFor(path)
-                    """<item id="res-$index" href="$path" media-type="$media"/>"""
+                    """<item id="res-$index" href="${hrefAttr(path)}" media-type="$media"/>"""
                 },
         )
         val allFiles = linkedMapOf<String, ByteArray>()
@@ -165,6 +165,28 @@ internal object PackageAssembly {
             .replace(">", "&gt;")
             .replace("\"", "&quot;")
             .replace("'", "&apos;")
+
+    /**
+     * Turn a package path (optionally with `#fragment`) into an XML-safe href attribute value:
+     * path segments are percent-encoded (spaces, non-ASCII, `%`, …) and the result is XML-escaped.
+     */
+    fun hrefAttr(pathWithFragment: String): String {
+        val path = pathWithFragment.substringBefore('#')
+        val fragment = pathWithFragment.substringAfter('#', missingDelimiterValue = "")
+        val encoded = path.split('/').joinToString("/") { encodeSegment(it) }
+        return escapeXml(if (fragment.isNotEmpty()) "$encoded#$fragment" else encoded)
+    }
+
+    private fun encodeSegment(segment: String): String = buildString {
+        segment.toByteArray(Charsets.UTF_8).forEach { b ->
+            val c = (b.toInt() and 0xFF).toChar()
+            if (c.isLetterOrDigit() && c.code < 128 || c in "-._~!$&'()*+,;=:@") {
+                append(c)
+            } else {
+                append('%').append("%02X".format(b.toInt() and 0xFF))
+            }
+        }
+    }
 
     fun zipEpub(files: Map<String, ByteArray>): ByteArray {
         val baos = ByteArrayOutputStream()
@@ -201,6 +223,10 @@ internal object PackageAssembly {
         path.endsWith(".otf", true) -> "font/otf"
         path.endsWith(".ttf", true) -> "font/ttf"
         path.endsWith(".woff", true) -> "font/woff"
+        path.endsWith(".woff2", true) -> "font/woff2"
+        path.endsWith(".webp", true) -> "image/webp"
+        path.endsWith(".smil", true) -> "application/smil+xml"
+        path.endsWith(".mp3", true) -> "audio/mpeg"
         else -> "application/octet-stream"
     }
 
@@ -260,7 +286,7 @@ internal object PackageAssembly {
         fun render(list: List<NavPoint>): String = buildString {
             appendLine("<ol>")
             list.forEach { p ->
-                appendLine("<li><a href=\"${p.href}\">${escapeXml(p.label)}</a>")
+                appendLine("<li><a href=\"${hrefAttr(p.href)}\">${escapeXml(p.label)}</a>")
                 if (p.children.isNotEmpty()) append(render(p.children))
                 appendLine("</li>")
             }
@@ -290,7 +316,7 @@ internal object PackageAssembly {
                 val order = play++
                 appendLine("""<navPoint id="${p.id}" playOrder="$order">""")
                 appendLine("""<navLabel><text>${escapeXml(p.label)}</text></navLabel>""")
-                appendLine("""<content src="${p.href}"/>""")
+                appendLine("""<content src="${hrefAttr(p.href)}"/>""")
                 if (p.children.isNotEmpty()) append(render(p.children))
                 appendLine("</navPoint>")
             }
@@ -331,7 +357,7 @@ internal object PackageAssembly {
                 appendLine("""<item id="cover-image" href="images/cover.png" media-type="image/png" properties="cover-image"/>""")
             }
             spineItems.forEach { item ->
-                appendLine("""<item id="${item.id}" href="${item.href}" media-type="application/xhtml+xml"/>""")
+                appendLine("""<item id="${item.id}" href="${hrefAttr(item.href)}" media-type="application/xhtml+xml"/>""")
             }
             extraManifest.forEach { appendLine(it) }
         }

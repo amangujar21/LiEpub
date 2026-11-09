@@ -5,7 +5,6 @@ import com.storyweaver.core.model.ImportedBookId
 import java.io.ByteArrayInputStream
 import java.security.MessageDigest
 import java.util.zip.ZipInputStream
-import javax.xml.parsers.DocumentBuilderFactory
 import org.w3c.dom.Document
 import org.w3c.dom.Element
 
@@ -16,8 +15,19 @@ data class ImportedEpub(
     val navToc: List<ImportedNavEntry>,
     val opfPath: String,
     val warnings: List<String> = emptyList(),
+    /** Zip path of the EPUB 3 navigation document, if any. */
+    val navDocumentPath: String? = null,
+    /** Zip path of the EPUB 2 NCX, if any. */
+    val ncxPath: String? = null,
 )
 
+/**
+ * One entry of an imported book's table of contents.
+ *
+ * [href] is resolved to a full zip path (e.g. `OEBPS/Text/ch1.xhtml`), keeping any
+ * `#fragment`, so it can be matched against [ImportedEpub.resources] keys directly.
+ * External links resolve to null.
+ */
 data class ImportedNavEntry(
     val title: String,
     val href: String?,
@@ -113,7 +123,8 @@ class EpubImporter(
             }
         }
 
-        val navToc = parseNav(entries, manifest, opfDir, warnings)
+        val navSource = findNavSource(manifest)
+        val navToc = parseNav(entries, navSource, warnings)
         val fingerprint = sha256(bytes)
         val book = ImportedBook(
             id = id,
@@ -140,7 +151,20 @@ class EpubImporter(
             navToc = navToc,
             opfPath = opfPath,
             warnings = warnings,
+            navDocumentPath = navSource.navPath,
+            ncxPath = navSource.ncxPath,
         )
+    }
+
+    private data class NavSource(val navPath: String?, val ncxPath: String?)
+
+    private fun findNavSource(manifest: Map<String, ManifestItem>): NavSource {
+        val nav = manifest.values.firstOrNull { "nav" in it.properties.split(Regex("\\s+")) }?.href
+        val ncx = (
+            manifest.values.firstOrNull { it.mediaType.contains("ncx", ignoreCase = true) }
+                ?: manifest.values.firstOrNull { it.href.endsWith(".ncx", true) }
+            )?.href
+        return NavSource(nav, ncx)
     }
 
     private fun looksLikeScript(bytes: ByteArray): Boolean {
@@ -150,30 +174,58 @@ class EpubImporter(
 
     private fun parseNav(
         entries: Map<String, ByteArray>,
-        manifest: Map<String, ManifestItem>,
-        opfDir: String,
+        source: NavSource,
         warnings: MutableList<String>,
     ): List<ImportedNavEntry> {
-        val navItem = manifest.values.firstOrNull { "nav" in it.properties.split(Regex("\\s+")) }
-        if (navItem != null) {
-            val bytes = entries[navItem.href] ?: return emptyList()
-            return runCatching { parseNavXhtml(bytes, navItem.href.substringBeforeLast('/') + "/") }
-                .getOrElse {
-                    warnings += "Failed to parse navigation document"
-                    emptyList()
-                }
+        // Prefer the EPUB 3 nav document; fall back to the NCX when it is missing or empty.
+        source.navPath?.let { path ->
+            val bytes = entries[path]
+            if (bytes != null) {
+                val parsed = runCatching { parseNavXhtml(bytes, dirOf(path)) }
+                    .onFailure { warnings += "Failed to parse navigation document" }
+                    .getOrDefault(emptyList())
+                if (parsed.isNotEmpty()) return parsed
+            }
         }
-        val ncx = manifest.values.firstOrNull { it.mediaType.contains("ncx", ignoreCase = true) }
-            ?: manifest.values.firstOrNull { it.href.endsWith(".ncx", true) }
-        if (ncx != null) {
-            val bytes = entries[ncx.href] ?: return emptyList()
-            return runCatching { parseNcx(bytes) }.getOrElse {
+        source.ncxPath?.let { path ->
+            val bytes = entries[path] ?: return emptyList()
+            return runCatching { parseNcx(bytes, dirOf(path)) }.getOrElse {
                 warnings += "Failed to parse NCX"
                 emptyList()
             }
         }
         return emptyList()
     }
+
+    private fun dirOf(path: String): String =
+        path.substringBeforeLast('/', missingDelimiterValue = "").let { if (it.isEmpty()) "" else "$it/" }
+
+    /** Resolve a TOC href relative to the nav/NCX file into a zip path, keeping `#fragment`. */
+    private fun resolveNavHref(baseDir: String, href: String?): String? {
+        val raw = href?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+        if (URI_SCHEME.containsMatchIn(raw)) return null // http:, mailto:, …
+        val pathPart = raw.substringBefore('#')
+        if (pathPart.isEmpty()) return null
+        val fragment = raw.substringAfter('#', missingDelimiterValue = "")
+        val resolved = resolvePath(baseDir, pathPart)
+        return if (fragment.isNotEmpty()) "$resolved#$fragment" else resolved
+    }
+
+    private fun localName(el: Element): String =
+        (el.localName ?: el.tagName.substringAfter(':')).lowercase()
+
+    /** First direct child element named [name] (case-insensitive, prefix-agnostic). */
+    private fun directChild(parent: Element, name: String): Element? {
+        val nodes = parent.childNodes
+        for (i in 0 until nodes.length) {
+            val n = nodes.item(i)
+            if (n is Element && localName(n) == name.lowercase()) return n
+        }
+        return null
+    }
+
+    private fun labelText(el: Element?): String? =
+        el?.textContent?.replace(WHITESPACE, " ")?.trim()?.ifEmpty { null }
 
     private fun parseNavXhtml(bytes: ByteArray, base: String): List<ImportedNavEntry> {
         val doc = parseXml(bytes)
@@ -185,37 +237,38 @@ class EpubImporter(
             if (type.contains("toc") || toc == null) toc = el
         }
         val rootOl = toc?.getElementsByTagName("ol")?.item(0) as? Element ?: return emptyList()
-        return parseOl(rootOl)
+        return parseOl(rootOl, base)
     }
 
-    private fun parseOl(ol: Element): List<ImportedNavEntry> {
+    private fun parseOl(ol: Element, base: String): List<ImportedNavEntry> {
         val result = mutableListOf<ImportedNavEntry>()
         val children = ol.childNodes
         for (i in 0 until children.length) {
             val node = children.item(i)
-            if (node !is Element || node.tagName.lowercase() != "li") continue
-            val a = node.getElementsByTagName("a").item(0) as? Element
-            val span = node.getElementsByTagName("span").item(0) as? Element
-            val title = a?.textContent?.trim() ?: span?.textContent?.trim() ?: "Section"
-            val href = a?.getAttribute("href")?.takeIf { it.isNotBlank() }
-            val nested = node.getElementsByTagName("ol").item(0) as? Element
-            result += ImportedNavEntry(title, href, nested?.let { parseOl(it) }.orEmpty())
+            if (node !is Element || localName(node) != "li") continue
+            // Use this <li>'s own label only — never one from a nested list.
+            val label = directChild(node, "a") ?: directChild(node, "span")
+            val title = labelText(label) ?: "Section"
+            val href = label?.takeIf { localName(it) == "a" }?.getAttribute("href")
+            val nested = directChild(node, "ol")
+            result += ImportedNavEntry(title, resolveNavHref(base, href), nested?.let { parseOl(it, base) }.orEmpty())
         }
         return result
     }
 
-    private fun parseNcx(bytes: ByteArray): List<ImportedNavEntry> {
+    private fun parseNcx(bytes: ByteArray, base: String): List<ImportedNavEntry> {
         val doc = parseXml(bytes)
-        val navMap = doc.getElementsByTagName("navMap").item(0) as? Element ?: return emptyList()
+        val navMap = (doc.getElementsByTagName("navMap").item(0) ?: doc.getElementsByTagNameNS("*", "navMap").item(0))
+            as? Element ?: return emptyList()
         fun walk(parent: Element): List<ImportedNavEntry> {
             val list = mutableListOf<ImportedNavEntry>()
             val points = parent.childNodes
             for (i in 0 until points.length) {
                 val n = points.item(i)
-                if (n !is Element || !n.tagName.equals("navPoint", true)) continue
-                val label = (n.getElementsByTagName("text").item(0) as? Element)?.textContent?.trim() ?: "Section"
-                val src = (n.getElementsByTagName("content").item(0) as? Element)?.getAttribute("src")
-                list += ImportedNavEntry(label, src, walk(n))
+                if (n !is Element || localName(n) != "navpoint") continue
+                val label = labelText(directChild(n, "navLabel")) ?: "Section"
+                val src = directChild(n, "content")?.getAttribute("src")
+                list += ImportedNavEntry(label, resolveNavHref(base, src), walk(n))
             }
             return list
         }
@@ -259,16 +312,7 @@ class EpubImporter(
         return (rootfiles.item(0) as Element).getAttribute("full-path")
     }
 
-    private fun parseXml(bytes: ByteArray): Document {
-        val factory = DocumentBuilderFactory.newInstance().apply {
-            isNamespaceAware = true
-            setFeature("http://apache.org/xml/features/disallow-doctype-decl", true)
-            setFeature("http://xml.org/sax/features/external-general-entities", false)
-            setFeature("http://xml.org/sax/features/external-parameter-entities", false)
-            isExpandEntityReferences = false
-        }
-        return factory.newDocumentBuilder().parse(ByteArrayInputStream(bytes))
-    }
+    private fun parseXml(bytes: ByteArray): Document = SafeXml.parse(bytes)
 
     private fun textOf(metadata: Element?, local: String): String? {
         if (metadata == null) return null
@@ -282,7 +326,7 @@ class EpubImporter(
     }
 
     private fun resolvePath(baseDir: String, href: String): String {
-        val clean = href.substringBefore('#').replace('\\', '/')
+        val clean = percentDecode(href.substringBefore('#')).replace('\\', '/')
         if (clean.startsWith("/")) return clean.trimStart('/')
         if (baseDir.isEmpty()) return clean
         val combined = (baseDir + clean).split('/')
@@ -297,6 +341,27 @@ class EpubImporter(
         return stack.joinToString("/")
     }
 
+    /** Decode %XX escapes as UTF-8. Unlike URLDecoder, '+' stays a literal plus. */
+    private fun percentDecode(s: String): String {
+        if ('%' !in s) return s
+        val out = java.io.ByteArrayOutputStream()
+        var i = 0
+        while (i < s.length) {
+            val c = s[i]
+            if (c == '%' && i + 2 <= s.lastIndex) {
+                val hex = s.substring(i + 1, i + 3).toIntOrNull(16)
+                if (hex != null) {
+                    out.write(hex)
+                    i += 3
+                    continue
+                }
+            }
+            out.write(c.toString().toByteArray(Charsets.UTF_8))
+            i++
+        }
+        return out.toString(Charsets.UTF_8.name())
+    }
+
     private data class ManifestItem(
         val id: String,
         val href: String,
@@ -305,6 +370,9 @@ class EpubImporter(
     )
 
     companion object {
+        private val URI_SCHEME = Regex("""^[a-zA-Z][a-zA-Z0-9+.-]*:""")
+        private val WHITESPACE = Regex("""\s+""")
+
         fun sha256(bytes: ByteArray): String {
             val dig = MessageDigest.getInstance("SHA-256").digest(bytes)
             return dig.joinToString("") { "%02x".format(it) }

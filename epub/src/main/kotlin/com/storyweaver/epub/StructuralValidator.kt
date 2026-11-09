@@ -2,7 +2,6 @@ package com.storyweaver.epub
 
 import java.io.ByteArrayInputStream
 import java.util.zip.ZipInputStream
-import javax.xml.parsers.DocumentBuilderFactory
 
 object StructuralValidator {
     fun validate(epubBytes: ByteArray): StructuralValidation {
@@ -41,32 +40,13 @@ object StructuralValidator {
             issues += "Missing NCX fallback"
         }
 
-        val factory = DocumentBuilderFactory.newInstance().apply {
-            isNamespaceAware = true
-            // Harden against XXE. Features are best-effort: Android's built-in parser
-            // rejects Apache-only feature URIs (throws with the URI as the message),
-            // which previously aborted the entire export as "Export failed".
-            secureXmlFeatures().forEach { (feature, enabled) ->
-                try {
-                    setFeature(feature, enabled)
-                } catch (_: Exception) {
-                    // Unsupported on this factory implementation — continue.
-                }
-            }
-            try {
-                setAttribute(javax.xml.XMLConstants.ACCESS_EXTERNAL_DTD, "")
-                setAttribute(javax.xml.XMLConstants.ACCESS_EXTERNAL_SCHEMA, "")
-            } catch (_: Exception) {
-                // Not all factories support these attributes.
-            }
-        }
-
+        // Well-formedness check. SafeXml allows the standard `<!DOCTYPE html>` used by real
+        // EPUB 3 content while never loading external entities/DTDs, and only sets parser
+        // features the platform supports (Android rejects Apache-only feature URIs).
         entries.filterKeys { it.endsWith(".xhtml") || it.endsWith(".opf") || it.endsWith(".ncx") || it.endsWith(".xml") }
             .forEach { (name, bytes) ->
                 try {
-                    // Normalize: strip BOM/leading whitespace so XML declaration is at offset 0
-                    val text = bytes.toString(Charsets.UTF_8).trimStart('\uFEFF', ' ', '\t', '\r', '\n')
-                    factory.newDocumentBuilder().parse(ByteArrayInputStream(text.toByteArray(Charsets.UTF_8)))
+                    SafeXml.parse(bytes)
                 } catch (e: Exception) {
                     issues += "XML parse failed for $name: ${e.message}"
                 }
@@ -77,7 +57,14 @@ object StructuralValidator {
         val hrefRegex = Regex("""href="([^"]+)"""")
         hrefRegex.findAll(opf).forEach { match ->
             val href = match.groupValues[1]
-            val path = "OEBPS/$href"
+            // Hrefs are XML-escaped, percent-encoded URLs; zip entry names are plain paths.
+            val decoded = runCatching {
+                java.net.URLDecoder.decode(
+                    href.replace("&amp;", "&").replace("&apos;", "'").replace("+", "%2B"),
+                    "UTF-8",
+                )
+            }.getOrDefault(href)
+            val path = "OEBPS/$decoded"
             if (!entries.containsKey(path) && !href.startsWith("http")) {
                 issues += "Manifest href missing: $href"
             }
@@ -86,11 +73,4 @@ object StructuralValidator {
         return StructuralValidation(ok = issues.isEmpty(), issues = issues)
     }
 
-    private fun secureXmlFeatures(): List<Pair<String, Boolean>> = listOf(
-        // Prefer disallowing DOCTYPE entirely (our packages never need one).
-        "http://apache.org/xml/features/disallow-doctype-decl" to true,
-        "http://xml.org/sax/features/external-general-entities" to false,
-        "http://xml.org/sax/features/external-parameter-entities" to false,
-        "http://apache.org/xml/features/nonvalidating/load-external-dtd" to false,
-    )
 }
