@@ -19,7 +19,7 @@ data class UserSettings(
 )
 
 object AppUpdateInfo {
-    const val CURRENT_VERSION = "0.2.0"
+    const val CURRENT_VERSION = "0.3.0"
     /** Pinned public release feed URL (user-initiated check only). */
-    const val RELEASE_FEED_URL = "https://raw.githubusercontent.com/storyweaver-app/releases/main/latest.json"
+    const val RELEASE_FEED_URL = "https://raw.githubusercontent.com/amangujar21/LiEpub/main/latest.json"
 }

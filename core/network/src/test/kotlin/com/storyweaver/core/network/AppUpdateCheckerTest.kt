@@ -28,4 +28,11 @@ class AppUpdateCheckerTest {
         val msg = AppUpdateChecker.parseFeed("""{"notes":"x"}""", "0.2.0")
         assertThat(msg).contains("No version info")
     }
+
+    @Test
+    fun `older feed version is not reported as an update`() {
+        val msg = AppUpdateChecker.parseFeed("""{"version":"0.2.0"}""", "0.10.0")
+        assertThat(msg).contains("latest version (0.10.0)")
+        assertThat(AppUpdateChecker.compareVersions("v0.10.0", "0.9.1")).isGreaterThan(0)
+    }
 }

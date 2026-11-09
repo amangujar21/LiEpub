@@ -1,7 +1,31 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
+}
+
+/**
+ * Release signing, never committed. Looked up in order:
+ *  1. env vars SW_KEYSTORE_FILE / SW_KEYSTORE_PASSWORD / SW_KEY_ALIAS / SW_KEY_PASSWORD (CI)
+ *  2. ~/.storyweaver/keystore.properties (storeFile, storePassword, keyAlias, keyPassword)
+ * Without either, release builds are produced unsigned.
+ */
+val releaseSigning: Map<String, String>? = run {
+    val env = System.getenv()
+    if (!env["SW_KEYSTORE_FILE"].isNullOrBlank()) {
+        return@run mapOf(
+            "storeFile" to env.getValue("SW_KEYSTORE_FILE"),
+            "storePassword" to env["SW_KEYSTORE_PASSWORD"].orEmpty(),
+            "keyAlias" to (env["SW_KEY_ALIAS"] ?: "storyweaver"),
+            "keyPassword" to (env["SW_KEY_PASSWORD"] ?: env["SW_KEYSTORE_PASSWORD"].orEmpty()),
+        )
+    }
+    val file = File(System.getProperty("user.home"), ".storyweaver/keystore.properties")
+    if (!file.isFile) return@run null
+    val props = Properties().apply { file.inputStream().use { load(it) } }
+    props.stringPropertyNames().associateWith { props.getProperty(it) }
 }
 
 android {
@@ -12,14 +36,28 @@ android {
         applicationId = "com.storyweaver.app"
         minSdk = 28
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.2.0"
+        versionCode = 2
+        versionName = "0.3.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    signingConfigs {
+        if (releaseSigning != null) {
+            create("release") {
+                storeFile = file(releaseSigning.getValue("storeFile"))
+                storePassword = releaseSigning.getValue("storePassword")
+                keyAlias = releaseSigning.getValue("keyAlias")
+                keyPassword = releaseSigning.getValue("keyPassword")
+            }
+        }
     }
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            // R8 code + resource shrinking: smaller, faster APK than the debug build.
+            isMinifyEnabled = true
+            isShrinkResources = true
+            signingConfig = signingConfigs.findByName("release")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
