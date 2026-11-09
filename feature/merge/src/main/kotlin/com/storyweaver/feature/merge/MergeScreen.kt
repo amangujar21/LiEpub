@@ -232,7 +232,7 @@ fun MergeScreen(
                         value = state.title,
                         onValueChange = viewModel::onTitleChange,
                         label = { Text("Book title") },
-                        placeholder = { Text(viewModel.suggestedTitle(state), maxLines = 1) },
+                        supportingText = { if (state.title.isBlank()) Text("Default: ${viewModel.suggestedTitle(state)}", maxLines = 1, overflow = TextOverflow.Ellipsis) },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                     )
@@ -240,7 +240,7 @@ fun MergeScreen(
                         value = state.author,
                         onValueChange = viewModel::onAuthorChange,
                         label = { Text("Author") },
-                        placeholder = { Text(viewModel.suggestedAuthor(state), maxLines = 1) },
+                        supportingText = { if (state.author.isBlank()) Text("Default: ${viewModel.suggestedAuthor(state)}", maxLines = 1, overflow = TextOverflow.Ellipsis) },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                     )

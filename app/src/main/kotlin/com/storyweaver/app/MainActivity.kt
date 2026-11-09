@@ -63,9 +63,13 @@ class MainActivity : FragmentActivity() {
         val sharedText = extractSharedText(intent)
         setContent {
             val app = application as StoryWeaverApp
-            val settings by app.container.preferences.settings.collectAsStateWithLifecycle(
-                initialValue = UserSettings(),
+            // Null until DataStore has loaded. Rendering with UserSettings() defaults first made
+            // the age notice reappear on every launch and let privacy mode skip its lock,
+            // because remember { … } in StoryWeaverRoot captured the defaults.
+            val loaded by app.container.preferences.settings.collectAsStateWithLifecycle(
+                initialValue = null as UserSettings?,
             )
+            val settings = loaded ?: return@setContent
             val dark = when (settings.themeMode) {
                 ThemeMode.SYSTEM -> androidx.compose.foundation.isSystemInDarkTheme()
                 ThemeMode.LIGHT -> false
