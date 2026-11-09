@@ -49,6 +49,7 @@ fun CreateScreen(
     viewModel: CreateViewModel,
     defaultOutputFolderUri: String? = null,
     onSaveToFolder: (suspend (filename: String, bytes: ByteArray) -> String?)? = null,
+    onExportMarkdown: ((filename: String, bytes: ByteArray) -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -207,6 +208,14 @@ fun CreateScreen(
                                     }
                                 }
                             }) { Text("Save to output folder") }
+                        }
+                        // Separate mode makes one EPUB per work; the Markdown tab takes the first.
+                        if (onExportMarkdown != null) {
+                            state.exportResults.firstOrNull()?.let { result ->
+                                OutlinedButton(onClick = { onExportMarkdown(result.filename, result.bytes) }) {
+                                    Text("Markdown")
+                                }
+                            }
                         }
                         OutlinedButton(
                             onClick = viewModel::saveCollection,

@@ -82,4 +82,44 @@ class LiteroticaParsersTest {
         assertThat(story.content.xhtmlBody).doesNotContain("1,198 Followers")
         assertThat(story.content.xhtmlBody).doesNotContain("indiaindianslutwife")
     }
+
+    private val breadcrumb = """
+        <nav><a href="https://www.literotica.com/">Home</a></nav>
+        <ol itemscope itemtype="https://schema.org/BreadcrumbList">
+          <li itemprop="itemListElement" itemscope itemtype="https://schema.org/ListItem">
+            <a href="/"><span itemprop="name"><span class="visually-hidden">Home</span></span></a>
+          </li>
+          <li itemprop="itemListElement" itemscope itemtype="https://schema.org/ListItem">
+            <a href="/authors/shiprat"><span itemprop="name">shiprat</span></a>
+          </li>
+        </ol>
+    """.trimIndent()
+
+    @Test
+    fun `live breadcrumb Home label never becomes author or title`() {
+        val works = LiteroticaParsers.parseAuthorCatalog(
+            """<html><body>$breadcrumb<h1> Stories by shiprat</h1>
+               <a href="https://www.literotica.com/s/a-tale">A Tale</a></body></html>""",
+            "https://www.literotica.com/authors/shiprat/works/stories",
+        )
+        assertThat(works.author.displayName).isEqualTo("shiprat")
+
+        val series = LiteroticaParsers.parseSeriesPage(
+            """<html><body>$breadcrumb<h1>Harbor Nights</h1>
+               <a href="https://www.literotica.com/authors/shiprat/works/stories" title="shiprat"><img alt=""/></a>
+               <a href="https://www.literotica.com/authors/shiprat/works/stories">29 Stories</a>
+               <a href="https://www.literotica.com/s/harbor-nights-ch-01">Harbor Nights Ch. 01</a></body></html>""",
+            "https://www.literotica.com/series/se/123",
+        )
+        assertThat(series.work.title).isEqualTo("Harbor Nights")
+
+        val story = LiteroticaParsers.parseStoryPage(
+            """<html><body>$breadcrumb<h1>A Tale</h1>
+               <a href="https://www.literotica.com/authors/shiprat">shiprat</a>
+               <div class="aa_ht"><p>${"Body text. ".repeat(20)}</p></div></body></html>""",
+            "https://www.literotica.com/s/a-tale",
+        )
+        assertThat(story.chapter.title).isEqualTo("A Tale")
+        assertThat(story.author.displayName).isEqualTo("shiprat")
+    }
 }

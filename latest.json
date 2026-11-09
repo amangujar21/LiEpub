@@ -1,5 +1,5 @@
 {
-  "version": "0.3.0",
-  "notes": "New Merge tab with ordered TOC, faster downloads, EPUB import fixed on Android, release build.",
+  "version": "0.4.0",
+  "notes": "TOC shows each author's name (no more \"Home\"), fixed series/story titles, new Markdown export tab.",
   "url": "https://github.com/amangujar21/LiEpub/releases/latest"
 }

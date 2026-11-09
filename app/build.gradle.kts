@@ -36,8 +36,8 @@ android {
         applicationId = "com.storyweaver.app"
         minSdk = 28
         targetSdk = 35
-        versionCode = 2
-        versionName = "0.3.0"
+        versionCode = 3
+        versionName = "0.4.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -95,6 +95,7 @@ dependencies {
     implementation(project(":feature:library"))
     implementation(project(":feature:settings"))
     implementation(project(":feature:merge"))
+    implementation(project(":feature:markdown"))
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)

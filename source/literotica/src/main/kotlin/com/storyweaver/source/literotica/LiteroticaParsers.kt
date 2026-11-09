@@ -50,10 +50,11 @@ object LiteroticaParsers {
     fun parseAuthorCatalog(html: String, pageUrl: String): AuthorCatalog {
         val doc = Jsoup.parse(html, pageUrl)
         val username = extractAuthorUsername(pageUrl, doc)
-        val displayName = doc.selectFirst("h1, [itemprop=name], .author_name, .panel h1")
-            ?.text()
+        val displayName = firstText(doc, ".author_name", "h1", ".panel h1")
+            ?.replace(WORKS_HEADING_PREFIX, "")
             ?.trim()
-            ?.ifBlank { username }
+            ?.takeIf { it.isNotBlank() }
+            ?: authorLinkName(doc, username)
             ?: username
         val author = Author(
             id = AuthorId("author-$username"),
@@ -176,18 +177,20 @@ object LiteroticaParsers {
         val doc = Jsoup.parse(html, pageUrl)
         val seriesId = Regex("""/series/se/([^/?#]+)""").find(pageUrl)?.groupValues?.get(1)
             ?: "unknown"
-        val title = doc.selectFirst("h1, .series_title, [itemprop=name]")?.text()?.trim()
+        val title = firstText(doc, "h1", ".series_title", "[itemprop=name]")
             ?: "Series $seriesId"
-        val authorName = doc.selectFirst("a[href*=/authors/], .author, [itemprop=author]")?.text()?.trim()
-            ?: "Unknown"
         val authorUsername = doc.selectFirst("a[href*=/authors/]")?.attr("href")
-            ?.let { Regex("""/authors/([^/]+)""").find(it)?.groupValues?.get(1) }
-            ?: authorName.lowercase(Locale.US).replace(" ", "-")
+            ?.let { Regex("""/authors/([^/?#]+)""").find(it)?.groupValues?.get(1) }
+        val authorName = authorUsername?.let { authorLinkName(doc, it) }
+            ?: firstText(doc, ".author", "[itemprop=author]")
+            ?: authorUsername
+            ?: "Unknown"
+        val resolvedUsername = authorUsername ?: authorName.lowercase(Locale.US).replace(" ", "-")
         val author = Author(
-            id = AuthorId("author-$authorUsername"),
-            siteUsername = authorUsername,
+            id = AuthorId("author-$resolvedUsername"),
+            siteUsername = resolvedUsername,
             displayName = authorName,
-            worksUrl = "https://www.literotica.com/authors/$authorUsername/works/stories",
+            worksUrl = "https://www.literotica.com/authors/$resolvedUsername/works/stories",
         )
         val work = Work(
             id = WorkId("series-$seriesId"),
@@ -224,12 +227,15 @@ object LiteroticaParsers {
 
     fun parseStoryPage(html: String, pageUrl: String): StoryPageParse {
         val doc = Jsoup.parse(html, pageUrl)
-        val title = doc.selectFirst("h1, .headline, [itemprop=name], .panel h1")?.text()?.trim()
+        val title = firstText(doc, "h1", ".headline", ".panel h1", "[itemprop=name]")
             ?: "Untitled"
-        val authorEl = doc.selectFirst("a[href*=/authors/], .y_eS, [itemprop=author] a, .author")
-        val authorName = authorEl?.text()?.trim() ?: "Unknown"
-        val authorUsername = authorEl?.attr("href")
-            ?.let { Regex("""/authors/([^/]+)""").find(it)?.groupValues?.get(1) }
+        val linkedUsername = doc.selectFirst("a[href*=/authors/]")?.attr("href")
+            ?.let { Regex("""/authors/([^/?#]+)""").find(it)?.groupValues?.get(1) }
+        val authorName = linkedUsername?.let { authorLinkName(doc, it) }
+            ?: firstText(doc, ".y_eS", "[itemprop=author] a", ".author")
+            ?: linkedUsername
+            ?: "Unknown"
+        val authorUsername = linkedUsername
             ?: authorName.lowercase(Locale.US).replace(Regex("""\s+"""), "-")
         val seriesLink = doc.selectFirst("a[href*=/series/se/]")?.absUrl("href")
         val category = doc.selectFirst("a[href*=/c/], .category")?.text()?.trim()
@@ -340,6 +346,48 @@ object LiteroticaParsers {
     }
 
     private const val MIN_STORY_BODY_CHARS = 80
+
+    /** "Stories by shiprat" → "shiprat" (live author works page heading). */
+    private val WORKS_HEADING_PREFIX =
+        Regex("""^\s*(?:stories|works|series|poems|submissions|story series)\s+by\s+""", RegexOption.IGNORE_CASE)
+
+    /** Stat links next to an author ("29 Stories", "1.2k Followers") are not names. */
+    private val AUTHOR_STAT_TEXT = Regex("""^[\d.,]+k?\s+\w+$""", RegexOption.IGNORE_CASE)
+
+    /**
+     * First non-blank text among [selectors], tried in priority order (not document order),
+     * ignoring site chrome such as the breadcrumb whose first item is a hidden "Home" label.
+     */
+    private fun firstText(doc: Document, vararg selectors: String): String? {
+        selectors.forEach { selector ->
+            doc.select(selector).forEach { el ->
+                if (isSiteChrome(el)) return@forEach
+                val text = el.text().trim()
+                if (text.isNotBlank()) return text
+            }
+        }
+        return null
+    }
+
+    private fun isSiteChrome(el: Element): Boolean =
+        (listOf(el) + el.parents()).any { e ->
+            e.tagName() == "nav" ||
+                e.attr("itemtype").contains("BreadcrumbList", ignoreCase = true) ||
+                e.className().contains("breadcrumb", ignoreCase = true)
+        }
+
+    /** Visible name on a link to the author's profile, falling back to its `title` attribute. */
+    private fun authorLinkName(doc: Document, username: String): String? {
+        val links = doc.select("a[href*=/authors/]").filter { a ->
+            Regex("""/authors/([^/?#]+)""").find(a.attr("href"))?.groupValues?.get(1)
+                .equals(username, ignoreCase = true) && !isSiteChrome(a)
+        }
+        links.forEach { a ->
+            val text = a.text().trim()
+            if (text.isNotBlank() && !AUTHOR_STAT_TEXT.matches(text)) return text
+        }
+        return links.firstNotNullOfOrNull { it.attr("title").trim().takeIf(String::isNotBlank) }
+    }
 
     private fun extractAuthorUsername(pageUrl: String, doc: Document): String {
         Regex("""/authors/([^/]+)""", RegexOption.IGNORE_CASE).find(pageUrl)?.groupValues?.get(1)

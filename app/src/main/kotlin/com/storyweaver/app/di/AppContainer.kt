@@ -19,6 +19,7 @@ import com.storyweaver.core.network.createStoryWeaverClient
 import com.storyweaver.epub.EpubImporter
 import com.storyweaver.epub.EpubMerger
 import com.storyweaver.epub.EpubWriter
+import com.storyweaver.epub.MarkdownExporter
 import com.storyweaver.feature.create.session.ChapterCachePort
 import com.storyweaver.feature.create.session.CollectionStore
 import com.storyweaver.feature.create.session.ExportHistoryPort
@@ -40,6 +41,7 @@ class AppContainer(context: Context) {
     val epubWriter: EpubWriter by lazy { EpubWriter() }
     val epubImporter: EpubImporter by lazy { EpubImporter() }
     val epubMerger: EpubMerger by lazy { EpubMerger(epubWriter, epubImporter) }
+    val markdownExporter: MarkdownExporter by lazy { MarkdownExporter() }
     val appUpdateChecker: AppUpdateChecker by lazy { AppUpdateChecker() }
 
     val collectionStore: CollectionStore by lazy {

@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.LibraryBooks
 import androidx.compose.material.icons.filled.Create
+import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Merge
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
@@ -49,6 +50,8 @@ import com.storyweaver.core.model.UserSettings
 import com.storyweaver.feature.create.CreateScreen
 import com.storyweaver.feature.create.CreateViewModel
 import com.storyweaver.feature.library.LibraryScreen
+import com.storyweaver.feature.markdown.MarkdownScreen
+import com.storyweaver.feature.markdown.MarkdownViewModel
 import com.storyweaver.feature.merge.MergeScreen
 import com.storyweaver.feature.merge.MergeViewModel
 import com.storyweaver.feature.settings.SettingsScreen
@@ -178,6 +181,7 @@ private fun StoryWeaverRoot(
     val destinations = listOf(
         Dest("create", "Create", Icons.Default.Create),
         Dest("merge", "Merge", Icons.Default.Merge),
+        Dest("markdown", "Markdown", Icons.Default.Description),
         Dest("library", "Library", Icons.AutoMirrored.Filled.LibraryBooks),
         Dest("settings", "Settings", Icons.Default.Settings),
     )
@@ -204,6 +208,13 @@ private fun StoryWeaverRoot(
         ),
     )
 
+    val markdownVm: MarkdownViewModel = viewModel(
+        factory = MarkdownViewModel.factory(
+            importer = app.container.epubImporter,
+            exporter = app.container.markdownExporter,
+        ),
+    )
+
     // The ViewModels are created before DataStore has emitted the saved settings (the first
     // composition sees UserSettings() defaults), so push the real values in once they load.
     LaunchedEffect(settings.downloadConcurrency) {
@@ -226,6 +237,27 @@ private fun StoryWeaverRoot(
         }
         saveFolderMessage = if (uri != null) "Saved $filename" else "Could not save to folder"
         uri
+    }
+
+    val saveMarkdownToOutputFolder: suspend (String, ByteArray) -> String? = save@{ filename, bytes ->
+        val folder = settings.defaultOutputFolderUri ?: return@save null
+        withContext(Dispatchers.IO) {
+            SafStorage.writeMarkdown(
+                context = context,
+                treeUri = Uri.parse(folder),
+                preferredFilename = filename,
+                bytes = bytes,
+            )
+        }
+    }
+
+    // "Markdown" on a Create/Merge result hands the built EPUB to the Markdown tab.
+    val openInMarkdown: (String, ByteArray) -> Unit = { filename, bytes ->
+        markdownVm.load(filename, "memory://$filename") { bytes }
+        navController.navigate("markdown") {
+            popUpTo(navController.graph.findStartDestination().id) { saveState = true }
+            launchSingleTop = true
+        }
     }
 
     if (sharedText != null) {
@@ -268,6 +300,7 @@ private fun StoryWeaverRoot(
                     viewModel = createVm,
                     defaultOutputFolderUri = settings.defaultOutputFolderUri,
                     onSaveToFolder = saveToOutputFolder,
+                    onExportMarkdown = openInMarkdown,
                 )
             }
             composable("merge") {
@@ -275,6 +308,14 @@ private fun StoryWeaverRoot(
                     viewModel = mergeVm,
                     defaultOutputFolderUri = settings.defaultOutputFolderUri,
                     onSaveToFolder = saveToOutputFolder,
+                    onExportMarkdown = openInMarkdown,
+                )
+            }
+            composable("markdown") {
+                MarkdownScreen(
+                    viewModel = markdownVm,
+                    defaultOutputFolderUri = settings.defaultOutputFolderUri,
+                    onSaveToFolder = saveMarkdownToOutputFolder,
                 )
             }
             composable("library") {

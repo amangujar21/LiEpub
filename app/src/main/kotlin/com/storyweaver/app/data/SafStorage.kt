@@ -26,20 +26,50 @@ object SafStorage {
         treeUri: Uri,
         preferredFilename: String,
         bytes: ByteArray,
+    ): String? = writeDocument(
+        context = context,
+        treeUri = treeUri,
+        safeFilename = FilenameSanitizer.sanitize(preferredFilename),
+        mimeType = "application/epub+zip",
+        bytes = bytes,
+    )
+
+    /** Same as [writeEpub] for a Markdown export. */
+    fun writeMarkdown(
+        context: Context,
+        treeUri: Uri,
+        preferredFilename: String,
+        bytes: ByteArray,
+    ): String? = writeDocument(
+        context = context,
+        treeUri = treeUri,
+        safeFilename = FilenameSanitizer.sanitize(preferredFilename.removeSuffix(".md"))
+            .removeSuffix(".epub") + ".md",
+        mimeType = "text/markdown",
+        bytes = bytes,
+    )
+
+    private fun writeDocument(
+        context: Context,
+        treeUri: Uri,
+        safeFilename: String,
+        mimeType: String,
+        bytes: ByteArray,
     ): String? {
         val tree = DocumentFile.fromTreeUri(context, treeUri) ?: return null
         if (!tree.canWrite()) return null
-        val safe = FilenameSanitizer.sanitize(preferredFilename)
-        var name = safe
+        val extension = "." + safeFilename.substringAfterLast('.')
+        val stem = safeFilename.removeSuffix(extension)
+        var name = safeFilename
         var index = 1
         while (tree.findFile(name) != null) {
-            name = FilenameSanitizer.numberedCopy(safe, index++)
+            name = "$stem (${index++})$extension"
             if (index > 200) return null
         }
-        val doc = tree.createFile("application/epub+zip", name.removeSuffix(".epub"))
-            ?: tree.createFile("application/epub+zip", name)
+        val doc = tree.createFile(mimeType, name.removeSuffix(extension))
+            ?: tree.createFile(mimeType, name)
             ?: return null
-        // Some providers append .epub themselves; ensure content is written.
+        // Providers append the extension for the MIME type themselves; ensure content is written.
         context.contentResolver.openOutputStream(doc.uri)?.use { out ->
             out.write(bytes)
             out.flush()

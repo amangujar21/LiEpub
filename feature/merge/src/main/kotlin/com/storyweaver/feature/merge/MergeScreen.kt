@@ -58,6 +58,7 @@ fun MergeScreen(
     viewModel: MergeViewModel,
     defaultOutputFolderUri: String? = null,
     onSaveToFolder: (suspend (filename: String, bytes: ByteArray) -> String?)? = null,
+    onExportMarkdown: ((filename: String, bytes: ByteArray) -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -336,6 +337,11 @@ fun MergeScreen(
                                 saveMessage = if (saved != null) "Saved to output folder" else "Could not save to folder"
                             }
                         }) { Text("Save to output folder") }
+                    }
+                    if (onExportMarkdown != null) {
+                        OutlinedButton(onClick = { onExportMarkdown(result.filename, result.bytes) }) {
+                            Text("Markdown")
+                        }
                     }
                 }
             }

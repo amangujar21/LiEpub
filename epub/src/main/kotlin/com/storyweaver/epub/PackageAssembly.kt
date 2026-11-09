@@ -55,9 +55,12 @@ internal object PackageAssembly {
         val byAuthor = chapters.groupBy { worksById[it.workId]?.authorId }
         byAuthor.forEach { (authorId, authorChapters) ->
             val author = authorId?.let { authorsById[it] }
-            val authorTitle = author?.displayName ?: "Author"
+            val authorTitle = author?.displayName
+                ?: authorChapters.firstNotNullOfOrNull { contents[it.id]?.authorDisplayName }
+                ?: "Author"
             val authorNavChildren = mutableListOf<NavPoint>()
-            val useAuthorDivider = snapshot.exportMode == ExportMode.COMBINED && byAuthor.size > 1
+            // Combined books always group the TOC as Author → series/stories → chapters.
+            val useAuthorDivider = snapshot.exportMode == ExportMode.COMBINED
             if (useAuthorDivider) {
                 val id = "author-${build.fileIndex}"
                 val path = "text/author_${build.fileIndex}.xhtml"

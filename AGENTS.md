@@ -19,8 +19,8 @@ Spec: `PLAN.md`. When anything conflicts, product boundaries in PLAN.md §1 win.
 | `:core:network` | OkHttp policy, host allowlist, retry |
 | `:core:database` | Room (M5+) |
 | `:source:literotica` | URL classifier, parsers, sanitizer |
-| `:epub` | Package write, import/merge (import M4+) |
-| `:feature:create` / `library` / `settings` | Compose UI |
+| `:epub` | Package write, import/merge (import M4+), Markdown export |
+| `:feature:create` / `merge` / `markdown` / `library` / `settings` | Compose UI |
 
 **Layering:** UI → ViewModels/use cases → repositories → Literotica | Room | EPUB | SAF.
 
