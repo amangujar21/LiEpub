@@ -56,6 +56,7 @@ dependencies {
     implementation(project(":feature:create"))
     implementation(project(":feature:library"))
     implementation(project(":feature:settings"))
+    implementation(project(":feature:merge"))
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)

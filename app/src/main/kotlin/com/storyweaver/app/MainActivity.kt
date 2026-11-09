@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.LibraryBooks
 import androidx.compose.material.icons.filled.Create
+import androidx.compose.material.icons.filled.Merge
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -48,6 +49,8 @@ import com.storyweaver.core.model.UserSettings
 import com.storyweaver.feature.create.CreateScreen
 import com.storyweaver.feature.create.CreateViewModel
 import com.storyweaver.feature.library.LibraryScreen
+import com.storyweaver.feature.merge.MergeScreen
+import com.storyweaver.feature.merge.MergeViewModel
 import com.storyweaver.feature.settings.SettingsScreen
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -170,6 +173,7 @@ private fun StoryWeaverRoot(
     val navController = rememberNavController()
     val destinations = listOf(
         Dest("create", "Create", Icons.Default.Create),
+        Dest("merge", "Merge", Icons.Default.Merge),
         Dest("library", "Library", Icons.AutoMirrored.Filled.LibraryBooks),
         Dest("settings", "Settings", Icons.Default.Settings),
     )
@@ -187,6 +191,28 @@ private fun StoryWeaverRoot(
             style = settings.epubStyle,
         ),
     )
+
+    val mergeVm: MergeViewModel = viewModel(
+        factory = MergeViewModel.factory(
+            importer = app.container.epubImporter,
+            merger = app.container.epubMerger,
+            style = settings.epubStyle,
+        ),
+    )
+
+    val saveToOutputFolder: suspend (String, ByteArray) -> String? = save@{ filename, bytes ->
+        val folder = settings.defaultOutputFolderUri ?: return@save null
+        val uri = withContext(Dispatchers.IO) {
+            SafStorage.writeEpub(
+                context = context,
+                treeUri = Uri.parse(folder),
+                preferredFilename = filename,
+                bytes = bytes,
+            )
+        }
+        saveFolderMessage = if (uri != null) "Saved $filename" else "Could not save to folder"
+        uri
+    }
 
     if (sharedText != null) {
         LaunchedEffect(sharedText) {
@@ -227,19 +253,14 @@ private fun StoryWeaverRoot(
                 CreateScreen(
                     viewModel = createVm,
                     defaultOutputFolderUri = settings.defaultOutputFolderUri,
-                    onSaveToFolder = { filename, bytes ->
-                        val folder = settings.defaultOutputFolderUri ?: return@CreateScreen null
-                        val uri = withContext(Dispatchers.IO) {
-                            SafStorage.writeEpub(
-                                context = context,
-                                treeUri = Uri.parse(folder),
-                                preferredFilename = filename,
-                                bytes = bytes,
-                            )
-                        }
-                        saveFolderMessage = if (uri != null) "Saved $filename" else "Could not save to folder"
-                        uri
-                    },
+                    onSaveToFolder = saveToOutputFolder,
+                )
+            }
+            composable("merge") {
+                MergeScreen(
+                    viewModel = mergeVm,
+                    defaultOutputFolderUri = settings.defaultOutputFolderUri,
+                    onSaveToFolder = saveToOutputFolder,
                 )
             }
             composable("library") {
@@ -299,6 +320,7 @@ private fun StoryWeaverRoot(
                         scope.launch {
                             app.container.preferences.update { it.copy(epubStyle = style) }
                             createVm.onStyleChange(style)
+                            mergeVm.setStyle(style)
                         }
                     },
                     onPrivacyChange = { enabled ->
