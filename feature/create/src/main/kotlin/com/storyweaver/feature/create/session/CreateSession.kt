@@ -73,7 +73,7 @@ data class CreateSessionState(
     val pendingContents: Map<ChapterId, ChapterContent> = emptyMap(),
     val pendingChapters: List<Chapter> = emptyList(),
     val collectionId: CollectionId? = null,
-    val concurrency: Int = 3,
+    val concurrency: Int = 4,
 ) {
     val hasCatalog: Boolean get() = catalogView != null && works.isNotEmpty()
     val hasContent: Boolean get() = works.isNotEmpty() || importedBooks.isNotEmpty()

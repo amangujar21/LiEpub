@@ -90,11 +90,13 @@ data class RetryPolicy(
 }
 
 fun createStoryWeaverClient(
-    userAgent: String = "StoryWeaver/0.1 (personal; local EPUB export)",
+    userAgent: String = "StoryWeaver/0.3 (personal; local EPUB export)",
     connectTimeout: Duration = Duration.ofSeconds(15),
     readTimeout: Duration = Duration.ofSeconds(30),
 ): OkHttpClient =
     OkHttpClient.Builder()
+        // Keep enough warm connections for parallel chapters × continuation pages.
+        .connectionPool(okhttp3.ConnectionPool(12, 5, TimeUnit.MINUTES))
         .connectTimeout(connectTimeout.toMillis(), TimeUnit.MILLISECONDS)
         .readTimeout(readTimeout.toMillis(), TimeUnit.MILLISECONDS)
         .followRedirects(true)

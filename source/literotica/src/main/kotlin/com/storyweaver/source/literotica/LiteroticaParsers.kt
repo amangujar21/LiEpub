@@ -19,6 +19,34 @@ import org.jsoup.nodes.Element
 import java.util.Locale
 
 object LiteroticaParsers {
+    private val PAGE_QUERY = Regex("""[?&]page=(\d+)""")
+    private val PAGE_PATH = Regex("""/s/[^/?#]+/(\d+)/?(?:[?#].*)?$""")
+    private val STORY_SLUG = Regex("""/s/([^/?#]+)""")
+
+    /**
+     * Pages 2..N of a multi-page story, in reading order.
+     *
+     * Literotica pagination can be abbreviated ("1 2 3 … 12") and also includes Next/page-1
+     * links, so the highest linked page number defines N and every page in between is
+     * included exactly once. Only links to the same story slug count (not the next chapter).
+     */
+    fun continuationPageUrls(pageUrl: String, hrefs: List<String>): List<String> {
+        val slug = STORY_SLUG.find(pageUrl)?.groupValues?.get(1) ?: return emptyList()
+        val base = pageUrl.substringBefore('#').substringBefore('?').trimEnd('/')
+        val byPage = sortedMapOf<Int, String>()
+        hrefs.forEach { href ->
+            if (STORY_SLUG.find(href)?.groupValues?.get(1) != slug) return@forEach
+            val n = PAGE_QUERY.find(href)?.groupValues?.get(1)?.toIntOrNull()
+                ?: PAGE_PATH.find(href)?.groupValues?.get(1)?.toIntOrNull()
+                ?: return@forEach
+            if (n >= 2) byPage.putIfAbsent(n, href.substringBefore('#'))
+        }
+        val last = (byPage.keys.maxOrNull() ?: return emptyList()).coerceAtMost(MAX_PAGES)
+        return (2..last).map { n -> byPage[n] ?: "$base?page=$n" }
+    }
+
+    private const val MAX_PAGES = 500
+
     fun parseAuthorCatalog(html: String, pageUrl: String): AuthorCatalog {
         val doc = Jsoup.parse(html, pageUrl)
         val username = extractAuthorUsername(pageUrl, doc)
@@ -213,14 +241,7 @@ object LiteroticaParsers {
             ?: throw IllegalStateException("Story body not found for $pageUrl")
         val sanitized = ContentSanitizer.sanitizeStoryHtml(contentRoot.html(), pageUrl)
 
-        val continuationUrls = doc.select("a[href]")
-            .map { it.absUrl("href") }
-            .filter { href ->
-                href.contains(pageUrl.substringAfter("/s/").substringBefore("?").substringBefore("#")) &&
-                    (href.contains("page=") || href.matches(Regex(""".*/s/[^/]+/\d+/?""")))
-            }
-            .distinct()
-            .filter { it != pageUrl }
+        val continuationUrls = continuationPageUrls(pageUrl, doc.select("a[href]").map { it.absUrl("href") })
 
         val slug = Regex("""/s/([^/?#]+)""").find(pageUrl)?.groupValues?.get(1) ?: "story"
         val workType = if (seriesLink != null) WorkType.SERIES else WorkType.STANDALONE

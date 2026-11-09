@@ -42,6 +42,7 @@ class HttpFetcher(
                         throw HttpStatusException(code, url)
                     }
                     val body = response.body?.string().orEmpty()
+                    gate.noteSuccess()
                     return@withContext FetchResult(
                         url = url,
                         finalUrl = response.request.url.toString(),

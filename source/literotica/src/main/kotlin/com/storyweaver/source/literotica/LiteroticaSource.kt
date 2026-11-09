@@ -7,11 +7,22 @@ import com.storyweaver.core.model.SourceType
 import com.storyweaver.core.model.SourceUrl
 import com.storyweaver.core.model.SourceValidation
 import com.storyweaver.core.network.HttpFetcher
+import kotlin.coroutines.cancellation.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.withContext
+
+/** Continuation pages of one chapter fetched at once (on top of chapter-level concurrency). */
+private const val PAGE_PARALLELISM = 3
+
+/** Links analyzed at once when several URLs are pasted. */
+private const val ANALYZE_PARALLELISM = 4
 
 data class ResolveProgress(
     val completed: Int,
@@ -87,7 +98,7 @@ class DefaultLiteroticaSource(
         return LiteroticaParsers.parseSeriesPage(page.body, page.finalUrl)
     }
 
-    override suspend fun fetchChapterContent(url: String): ChapterContent {
+    override suspend fun fetchChapterContent(url: String): ChapterContent = withContext(Dispatchers.Default) {
         val classified = classify(url)
         require(classified.validation == SourceValidation.VALID && classified.sourceType == SourceType.STORY) {
             classified.message ?: "Invalid story URL"
@@ -95,20 +106,24 @@ class DefaultLiteroticaSource(
         val page = fetcher.getText(classified.canonical!!)
         val parsed = LiteroticaParsers.parseStoryPage(page.body, page.finalUrl)
         if (parsed.continuationUrls.isEmpty()) {
-            return parsed.content
+            return@withContext parsed.content
         }
-        // Merge continuation pages in order
-        val bodies = buildList {
-            add(parsed.content.xhtmlBody)
-            parsed.continuationUrls.forEach { contUrl ->
-                val contPage = fetcher.getText(contUrl)
-                val cont = LiteroticaParsers.parseStoryPage(contPage.body, contPage.finalUrl)
-                add(cont.content.xhtmlBody)
-            }
+        // Fetch continuation pages in parallel (the shared RequestGate still paces request
+        // starts), then join them in page order.
+        val pageLimit = Semaphore(PAGE_PARALLELISM)
+        val rest = coroutineScope {
+            parsed.continuationUrls.map { contUrl ->
+                async {
+                    pageLimit.withPermit {
+                        val contPage = fetcher.getText(contUrl)
+                        LiteroticaParsers.parseStoryPage(contPage.body, contPage.finalUrl).content.xhtmlBody
+                    }
+                }
+            }.awaitAll()
         }
-        val merged = bodies.joinToString("\n")
+        val merged = (listOf(parsed.content.xhtmlBody) + rest).joinToString("\n")
         val hash = ContentSanitizer.sha256(merged)
-        return parsed.content.copy(xhtmlBody = merged, contentHash = hash, sourceFingerprint = hash)
+        parsed.content.copy(xhtmlBody = merged, contentHash = hash, sourceFingerprint = hash)
     }
 
     override suspend fun resolveStory(url: String): AuthorCatalog {
@@ -168,41 +183,53 @@ class DefaultLiteroticaSource(
             .associate { it.submitted to (it.message ?: it.validation.name) }
             .toMutableMap()
 
-        val catalogs = mutableListOf<AuthorCatalog>()
         val total = valid.size.coerceAtLeast(1)
-        valid.forEachIndexed { index, source ->
-            val canonical = source.canonical!!
-            onProgress(
-                ResolveProgress(
-                    completed = index,
-                    total = total,
-                    currentUrl = canonical,
-                    message = "Analyzing ${index + 1}/$total…",
-                ),
-            )
-            try {
-                when (source.sourceType) {
-                    SourceType.AUTHOR_WORKS -> catalogs += fetchAuthorCatalog(canonical)
-                    SourceType.SERIES -> {
-                        val series = fetchSeries(canonical)
-                        catalogs += AuthorCatalog(
-                            author = com.storyweaver.core.model.Author(
-                                id = series.work.authorId,
-                                siteUsername = series.work.authorId.value.removePrefix("author-"),
-                                displayName = series.work.authorId.value.removePrefix("author-"),
-                                worksUrl = "",
-                            ),
-                            series = listOf(series),
-                            standalones = emptyList(),
-                        )
+        // Analyze links in parallel (bounded; the shared RequestGate paces request starts),
+        // keeping results in the order the links were entered.
+        val analyzeLimit = Semaphore(ANALYZE_PARALLELISM)
+        val progressLock = Mutex()
+        var completed = 0
+        onProgress(ResolveProgress(0, total, valid.firstOrNull()?.canonical.orEmpty(), "Analyzing 0/$total…"))
+        val outcomes: List<Pair<AuthorCatalog?, Pair<String, String>?>> = withContext(Dispatchers.Default) {
+            valid.map { source ->
+                async {
+                    val canonical = source.canonical!!
+                    val outcome = analyzeLimit.withPermit {
+                        try {
+                            when (source.sourceType) {
+                                SourceType.AUTHOR_WORKS -> fetchAuthorCatalog(canonical) to null
+                                SourceType.SERIES -> {
+                                    val series = fetchSeries(canonical)
+                                    AuthorCatalog(
+                                        author = com.storyweaver.core.model.Author(
+                                            id = series.work.authorId,
+                                            siteUsername = series.work.authorId.value.removePrefix("author-"),
+                                            displayName = series.work.authorId.value.removePrefix("author-"),
+                                            worksUrl = "",
+                                        ),
+                                        series = listOf(series),
+                                        standalones = emptyList(),
+                                    ) to null
+                                }
+                                SourceType.STORY -> resolveStory(canonical) to null
+                                SourceType.UNKNOWN -> null to (source.submitted to "Unknown source type")
+                            }
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            null to (canonical to (e.message ?: e.toString()))
+                        }
                     }
-                    SourceType.STORY -> catalogs += resolveStory(canonical)
-                    SourceType.UNKNOWN -> linkErrors[source.submitted] = "Unknown source type"
+                    progressLock.withLock {
+                        completed++
+                        onProgress(ResolveProgress(completed, total, canonical, "Analyzing $completed/$total…"))
+                    }
+                    outcome
                 }
-            } catch (e: Exception) {
-                linkErrors[canonical] = e.message ?: e.toString()
-            }
+            }.awaitAll()
         }
+        val catalogs = outcomes.mapNotNull { it.first }
+        outcomes.mapNotNull { it.second }.forEach { (link, message) -> linkErrors[link] = message }
         onProgress(ResolveProgress(total, total, "", "Analysis complete"))
 
         if (catalogs.isEmpty()) {

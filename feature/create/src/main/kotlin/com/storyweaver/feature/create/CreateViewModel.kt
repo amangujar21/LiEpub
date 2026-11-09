@@ -260,7 +260,7 @@ class CreateViewModel(
             collections: CollectionStore,
             chapterCache: ChapterCachePort,
             exportHistory: ExportHistoryPort,
-            concurrency: Int = 3,
+            concurrency: Int = 4,
             style: EpubStyle = EpubStyle.MODERN,
         ): ViewModelProvider.Factory =
             object : ViewModelProvider.Factory {

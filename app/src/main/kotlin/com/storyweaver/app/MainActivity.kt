@@ -200,6 +200,16 @@ private fun StoryWeaverRoot(
         ),
     )
 
+    // The ViewModels are created before DataStore has emitted the saved settings (the first
+    // composition sees UserSettings() defaults), so push the real values in once they load.
+    LaunchedEffect(settings.downloadConcurrency) {
+        createVm.setConcurrency(settings.downloadConcurrency)
+    }
+    LaunchedEffect(settings.epubStyle) {
+        createVm.onStyleChange(settings.epubStyle)
+        mergeVm.setStyle(settings.epubStyle)
+    }
+
     val saveToOutputFolder: suspend (String, ByteArray) -> String? = save@{ filename, bytes ->
         val folder = settings.defaultOutputFolderUri ?: return@save null
         val uri = withContext(Dispatchers.IO) {

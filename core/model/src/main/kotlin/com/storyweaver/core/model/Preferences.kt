@@ -10,7 +10,7 @@ data class UserSettings(
     val themeMode: ThemeMode = ThemeMode.SYSTEM,
     val dynamicColor: Boolean = false,
     /** Parallel chapter downloads (1–6). Default 3 balances speed vs origin 429 risk. */
-    val downloadConcurrency: Int = 3,
+    val downloadConcurrency: Int = 4,
     val epubStyle: EpubStyle = EpubStyle.MODERN,
     val privacyMode: Boolean = false,
     val ageAcknowledged: Boolean = false,

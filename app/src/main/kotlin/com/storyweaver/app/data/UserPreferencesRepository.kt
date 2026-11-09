@@ -34,7 +34,7 @@ class UserPreferencesRepository(private val context: Context) {
                 runCatching { ThemeMode.valueOf(it) }.getOrDefault(ThemeMode.SYSTEM)
             } ?: ThemeMode.SYSTEM,
             dynamicColor = prefs[Keys.dynamicColor] ?: false,
-            downloadConcurrency = (prefs[Keys.concurrency] ?: 3).coerceIn(1, 6),
+            downloadConcurrency = (prefs[Keys.concurrency] ?: 4).coerceIn(1, 6),
             epubStyle = prefs[Keys.epubStyle]?.let {
                 runCatching { EpubStyle.valueOf(it) }.getOrDefault(EpubStyle.MODERN)
             } ?: EpubStyle.MODERN,
@@ -52,7 +52,7 @@ class UserPreferencesRepository(private val context: Context) {
                     runCatching { ThemeMode.valueOf(it) }.getOrDefault(ThemeMode.SYSTEM)
                 } ?: ThemeMode.SYSTEM,
                 dynamicColor = prefs[Keys.dynamicColor] ?: false,
-                downloadConcurrency = (prefs[Keys.concurrency] ?: 3).coerceIn(1, 6),
+                downloadConcurrency = (prefs[Keys.concurrency] ?: 4).coerceIn(1, 6),
                 epubStyle = prefs[Keys.epubStyle]?.let {
                     runCatching { EpubStyle.valueOf(it) }.getOrDefault(EpubStyle.MODERN)
                 } ?: EpubStyle.MODERN,
